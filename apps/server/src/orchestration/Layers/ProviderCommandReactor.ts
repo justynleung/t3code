@@ -493,6 +493,19 @@ const make = Effect.gen(function* () {
       });
     }
     const preferredProvider: ProviderDriverKind = desiredDriverKind;
+    const desiredProviderSnapshot = (yield* providerRegistry.getProviders).find(
+      (snapshot) => snapshot.instanceId === desiredInstanceId,
+    );
+    if (
+      desiredProviderSnapshot?.supportedRuntimeModes !== undefined &&
+      !desiredProviderSnapshot.supportedRuntimeModes.includes(desiredRuntimeMode)
+    ) {
+      return yield* new ProviderAdapterRequestError({
+        provider: preferredProvider,
+        method: "thread.runtime-mode.set",
+        detail: `Provider '${desiredInstanceId}' does not support runtime mode '${desiredRuntimeMode}'.`,
+      });
+    }
     if (options?.pendingTurnStart === true && thread.session?.status !== "running") {
       yield* setThreadSession({
         threadId,
