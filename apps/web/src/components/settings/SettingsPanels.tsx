@@ -7,7 +7,7 @@ import {
   RefreshCwIcon,
   SettingsIcon,
 } from "lucide-react";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import type { CSSProperties } from "react";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
@@ -83,7 +83,7 @@ import {
   serverEnvironment,
 } from "../../state/server";
 import { usePrimaryEnvironment } from "../../state/environments";
-import { useProjects } from "../../state/entities";
+import { useProjects, useServerConfigs } from "../../state/entities";
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
 import { formatRelativeTimeLabel, getRelativeTimeState } from "../../timestampFormat";
 import { Button } from "../ui/button";
@@ -139,6 +139,11 @@ import {
 import { searchableSetting } from "./settingsSearch";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { useAtomCommand } from "../../state/use-atom-command";
+import {
+  isThreadVisible,
+  resolveModeModelSelection,
+  resolvePiModeWriterRestoration,
+} from "../../piModePolicy";
 
 const THEME_OPTIONS = [
   {
@@ -1693,8 +1698,15 @@ export function GeneralSettingsPanel() {
 export function ProviderSettingsPanel() {
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
-  const serverProviders = useAtomValue(primaryServerProvidersAtom);
+  const navigate = useNavigate();
+  const allServerProviders = useAtomValue(primaryServerProvidersAtom);
+  const serverProviders = settings.piModeEnabled
+    ? allServerProviders.filter((provider) => provider.driver === "piAgent")
+    : allServerProviders;
   const primaryEnvironment = usePrimaryEnvironment();
+  const persistServerSettings = useAtomCommand(serverEnvironment.updateSettings, {
+    reportFailure: false,
+  });
   const refreshServerProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
@@ -1702,6 +1714,7 @@ export function ProviderSettingsPanel() {
     reportFailure: false,
   });
   const [isRefreshingProviders, setIsRefreshingProviders] = useState(false);
+  const [isTogglingPiMode, setIsTogglingPiMode] = useState(false);
   const [isAddInstanceDialogOpen, setIsAddInstanceDialogOpen] = useState(false);
   const [updatingProviderDrivers, setUpdatingProviderDrivers] = useState<
     ReadonlySet<ProviderDriverKind>
@@ -1719,11 +1732,12 @@ export function ProviderSettingsPanel() {
   );
   const visibleProviderSettings = PROVIDER_SETTINGS.filter(
     (providerSettings) =>
-      providerSettings.provider !== "cursor" ||
-      serverProviders.some(
-        (provider) =>
-          provider.instanceId === defaultInstanceIdForDriver(ProviderDriverKind.make("cursor")),
-      ),
+      (settings.piModeEnabled ? providerSettings.provider === "piAgent" : true) &&
+      (providerSettings.provider !== "cursor" ||
+        serverProviders.some(
+          (provider) =>
+            provider.instanceId === defaultInstanceIdForDriver(ProviderDriverKind.make("cursor")),
+        )),
   );
   const textGenerationModelSelection = resolveAppModelSelectionState(settings, serverProviders);
   const textGenInstanceId = textGenerationModelSelection.instanceId;
@@ -1768,6 +1782,95 @@ export function ProviderSettingsPanel() {
       }
     })();
   }, [primaryEnvironment, refreshServerProviders]);
+
+  const setPiMode = useCallback(
+    async (enabled: boolean) => {
+      if (!primaryEnvironment || isTogglingPiMode) return;
+      setIsTogglingPiMode(true);
+      try {
+        if (enabled) {
+          const selection = resolveModeModelSelection(
+            "pi",
+            settings.textGenerationModelSelection,
+            settings.piModeLastModelSelection,
+            allServerProviders,
+          );
+          if (!selection) {
+            toastManager.add({
+              type: "error",
+              title: "Pi Agent is not installed or ready",
+              description: "Check the Pi Agent provider card for details.",
+            });
+            return;
+          }
+          const result = await persistServerSettings({
+            environmentId: primaryEnvironment.environmentId,
+            input: {
+              patch: {
+                textGenerationModelSelection: selection,
+                sourceControlWriterModelSelection: selection,
+              },
+            },
+          });
+          if (result._tag === "Failure") {
+            toastManager.add({
+              type: "error",
+              title: "Could not enable Pi mode",
+              description: "The writing model settings could not be updated.",
+            });
+            return;
+          }
+          updateSettings({
+            piModeEnabled: true,
+            piModeLastModelSelection: selection,
+            piModeWriterRestore: {
+              previousTextGenerationModelSelection: settings.textGenerationModelSelection,
+              previousSourceControlWriterModelSelection: settings.sourceControlWriterModelSelection,
+              appliedPiSelection: selection,
+            },
+          });
+        } else {
+          const restore = settings.piModeWriterRestore;
+          const patch = resolvePiModeWriterRestoration(
+            settings.textGenerationModelSelection,
+            settings.sourceControlWriterModelSelection,
+            restore,
+          );
+          if (Object.keys(patch).length > 0) {
+            const result = await persistServerSettings({
+              environmentId: primaryEnvironment.environmentId,
+              input: { patch },
+            });
+            if (result._tag === "Failure") {
+              toastManager.add({
+                type: "error",
+                title: "Could not disable Pi mode",
+                description:
+                  "Writing model restoration failed. Retry to preserve the restore record.",
+              });
+              return;
+            }
+          }
+          updateSettings({ piModeEnabled: false, piModeWriterRestore: null });
+        }
+        await navigate({ to: "/", replace: true });
+      } finally {
+        setIsTogglingPiMode(false);
+      }
+    },
+    [
+      allServerProviders,
+      isTogglingPiMode,
+      navigate,
+      persistServerSettings,
+      primaryEnvironment,
+      settings.piModeLastModelSelection,
+      settings.piModeWriterRestore,
+      settings.sourceControlWriterModelSelection,
+      settings.textGenerationModelSelection,
+      updateSettings,
+    ],
+  );
 
   const runProviderUpdate = useCallback(
     async (candidate: ProviderUpdateCandidate) => {
@@ -1883,6 +1986,7 @@ export function ProviderSettingsPanel() {
   }
   for (const [driver, list] of instancesByDriver) {
     if (visibleDriverKinds.has(driver)) continue;
+    if (settings.piModeEnabled && driver !== "piAgent") continue;
     for (const [id, instance] of list) {
       rows.push({
         instanceId: id,
@@ -2036,6 +2140,23 @@ export function ProviderSettingsPanel() {
           </div>
         }
       >
+        <SettingsRow
+          title={settings.piModeEnabled ? "Pi mode enabled" : "Pi mode"}
+          description={
+            settings.piModeEnabled
+              ? "Only Pi Agent threads and providers are shown."
+              : "Use T3 Code as a focused Pi Agent interface."
+          }
+          control={
+            <Switch
+              checked={settings.piModeEnabled}
+              disabled={isTogglingPiMode}
+              onCheckedChange={(checked) => void setPiMode(Boolean(checked))}
+              aria-label="Pi mode"
+            />
+          }
+        />
+
         <SettingsRow
           title={
             <span className="inline-flex items-center gap-1.5">
@@ -2200,7 +2321,13 @@ export function ProviderSettingsPanel() {
       </SettingsSection>
 
       {isAddInstanceDialogOpen ? (
-        <AddProviderInstanceDialog open onOpenChange={setIsAddInstanceDialogOpen} />
+        <AddProviderInstanceDialog
+          open
+          onOpenChange={setIsAddInstanceDialogOpen}
+          allowedDriverKind={
+            settings.piModeEnabled ? ProviderDriverKind.make("piAgent") : undefined
+          }
+        />
       ) : null}
     </SettingsPageContainer>
   );
@@ -2208,6 +2335,8 @@ export function ProviderSettingsPanel() {
 
 export function ArchivedThreadsPanel() {
   const projects = useProjects();
+  const piModeEnabled = usePrimarySettings((settings) => settings.piModeEnabled);
+  const serverConfigs = useServerConfigs();
   const { unarchiveThread, confirmAndDeleteThread } = useThreadActions();
   const environmentIds = useMemo(
     () => [...new Set(projects.map((project) => project.environmentId))],
@@ -2238,10 +2367,16 @@ export function ArchivedThreadsPanel() {
       ),
     );
     const threads = archivedSnapshots.flatMap(({ environmentId, snapshot }) =>
-      snapshot.threads.map((thread) => ({
-        ...thread,
-        environmentId,
-      })),
+      snapshot.threads
+        .filter(
+          (thread) =>
+            !piModeEnabled ||
+            isThreadVisible("pi", thread, serverConfigs.get(environmentId)?.providers ?? []),
+        )
+        .map((thread) => ({
+          ...thread,
+          environmentId,
+        })),
     );
 
     const archivedProjects = Array.from(projectsByEnvironmentAndId.values());
@@ -2268,7 +2403,7 @@ export function ArchivedThreadsPanel() {
       }
     }
     return groups;
-  }, [archivedSnapshots]);
+  }, [archivedSnapshots, piModeEnabled, serverConfigs]);
 
   const handleArchivedThreadContextMenu = useCallback(
     async (threadRef: ScopedThreadRef, position: { x: number; y: number }) => {

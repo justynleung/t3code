@@ -22,6 +22,7 @@ import {
 } from "./ProviderUpdateLaunchNotification.logic";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { useAtomCommand } from "../state/use-atom-command";
+import { useClientSettings } from "../hooks/useSettings";
 
 const seenProviderUpdateNotificationKeys = new Set<string>();
 type ProviderUpdateToastId = ReturnType<typeof toastManager.add>;
@@ -112,7 +113,9 @@ function isTerminalProviderUpdateToastView(view: ProviderUpdateToastView) {
  */
 export function ProviderUpdatePrimaryNotification() {
   const navigate = useNavigate();
-  const providers = useAtomValue(primaryServerProvidersAtom);
+  const allProviders = useAtomValue(primaryServerProvidersAtom);
+  const piModeEnabled = useClientSettings((settings) => settings.piModeEnabled);
+  const providers = piModeEnabled ? [] : allProviders;
   const primaryEnvironment = usePrimaryEnvironment();
   const updateProvider = useAtomCommand(serverEnvironment.updateProvider, {
     reportFailure: false,

@@ -20,6 +20,8 @@ import type {
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
 import { useMemo } from "react";
+import { useClientSettings } from "../hooks/useSettings";
+import { filterThreadRefs } from "../piModePolicy";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentProjects } from "./projects";
 import { environmentServerConfigsAtom } from "./server";
@@ -85,7 +87,16 @@ export function useProjectRefs(): ReadonlyArray<ScopedProjectRef> {
 }
 
 export function useThreadRefs(): ReadonlyArray<ScopedThreadRef> {
-  return useAtomValue(environmentThreadShells.threadRefsAtom);
+  const refs = useAtomValue(environmentThreadShells.threadRefsAtom);
+  const threads = useFilteredThreadShells(useAtomValue(environmentThreadShells.threadShellsAtom));
+  const visible = useMemo(
+    () => new Set(threads.map((thread) => `${thread.environmentId}:${thread.id}`)),
+    [threads],
+  );
+  return useMemo(
+    () => refs.filter((ref) => visible.has(`${ref.environmentId}:${ref.threadId}`)),
+    [refs, visible],
+  );
 }
 
 export function useEnvironmentProjectRefs(
@@ -101,10 +112,19 @@ export function useEnvironmentProjectRefs(
 export function useEnvironmentThreadRefs(
   environmentId: EnvironmentId | null,
 ): ReadonlyArray<ScopedThreadRef> {
-  return useAtomValue(
+  const refs = useAtomValue(
     environmentId === null
       ? EMPTY_THREAD_REFS_ATOM
       : environmentThreadShells.environmentThreadRefsAtom(environmentId),
+  );
+  const threads = useFilteredThreadShells(useAtomValue(environmentThreadShells.threadShellsAtom));
+  const visible = useMemo(
+    () => new Set(threads.map((thread) => `${thread.environmentId}:${thread.id}`)),
+    [threads],
+  );
+  return useMemo(
+    () => refs.filter((ref) => visible.has(`${ref.environmentId}:${ref.threadId}`)),
+    [refs, visible],
   );
 }
 
@@ -117,7 +137,7 @@ export function useServerConfigs(): ReadonlyMap<EnvironmentId, ServerConfig> {
 }
 
 export function useThreadShells(): ReadonlyArray<EnvironmentThreadShell> {
-  return useAtomValue(environmentThreadShells.threadShellsAtom);
+  return useFilteredThreadShells(useAtomValue(environmentThreadShells.threadShellsAtom));
 }
 
 export function useAllEnvironmentShellsBootstrapped(): boolean {
@@ -127,7 +147,24 @@ export function useAllEnvironmentShellsBootstrapped(): boolean {
 export function useThreadShellsForProjectRefs(
   refs: ReadonlyArray<ScopedProjectRef>,
 ): ReadonlyArray<EnvironmentThreadShell> {
-  return useAtomValue(environmentThreadShells.threadShellsForProjectRefsAtom(refs));
+  return useFilteredThreadShells(
+    useAtomValue(environmentThreadShells.threadShellsForProjectRefsAtom(refs)),
+  );
+}
+
+function useFilteredThreadShells(
+  threads: ReadonlyArray<EnvironmentThreadShell>,
+): ReadonlyArray<EnvironmentThreadShell> {
+  const piModeEnabled = useClientSettings((settings) => settings.piModeEnabled);
+  const configs = useServerConfigs();
+  return useMemo(() => {
+    if (!piModeEnabled) return threads;
+    return threads.filter(
+      (thread) =>
+        filterThreadRefs("pi", [thread], configs.get(thread.environmentId)?.providers ?? [])
+          .length > 0,
+    );
+  }, [configs, piModeEnabled, threads]);
 }
 
 export function useProject(ref: ScopedProjectRef | null): EnvironmentProject | null {

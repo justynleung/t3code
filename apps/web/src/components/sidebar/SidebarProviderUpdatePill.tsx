@@ -10,6 +10,7 @@ import {
   type ProviderUpdateSidebarPillView,
 } from "../ProviderUpdateLaunchNotification.logic";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { useClientSettings } from "../../hooks/useSettings";
 
 const PROVIDER_UPDATE_PILL_STYLES = {
   loading:
@@ -40,7 +41,9 @@ function latestProviderCheckedAt(
 
 export function SidebarProviderUpdatePill() {
   const navigate = useNavigate();
-  const providers = useAtomValue(primaryServerProvidersAtom);
+  const allProviders = useAtomValue(primaryServerProvidersAtom);
+  const piModeEnabled = useClientSettings((settings) => settings.piModeEnabled);
+  const providers = piModeEnabled ? [] : allProviders;
   const [dismissedKeys, setDismissedKeys] = useState<ReadonlySet<string>>(() => new Set());
   const [renderedView, setRenderedView] = useState<ProviderUpdateSidebarPillView | null>(null);
   const [pendingView, setPendingView] = useState<ProviderUpdateSidebarPillView | null>(null);

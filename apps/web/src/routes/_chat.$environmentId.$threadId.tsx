@@ -9,10 +9,14 @@ import { resolveThreadSyncPhase } from "../threadSync";
 import { SidebarInset } from "~/components/ui/sidebar";
 import {
   useEnvironmentThreadRefs,
+  useServerConfigs,
   useThreadDetail,
   useThreadShell,
   useThreadStatus,
 } from "../state/entities";
+import { useClientSettings } from "../hooks/useSettings";
+import { isThreadVisible } from "../piModePolicy";
+import { toastManager } from "../components/ui/toast";
 import { useEnvironmentQuery } from "../state/query";
 import { environmentShell } from "../state/shell";
 
@@ -27,6 +31,8 @@ function ChatThreadRouteView() {
   const serverThreadShell = useThreadShell(threadRef);
   const serverThreadDetail = useThreadDetail(threadRef);
   const serverThreadStatus = useThreadStatus(threadRef);
+  const piModeEnabled = useClientSettings((settings) => settings.piModeEnabled);
+  const serverConfigs = useServerConfigs();
   const environmentThreadRefs = useEnvironmentThreadRefs(threadRef?.environmentId ?? null);
   const bootstrapComplete = shell.data?.snapshot._tag === "Some";
   const environmentHasServerThreads = environmentThreadRefs.length > 0;
@@ -56,6 +62,24 @@ function ChatThreadRouteView() {
   });
   const serverThreadStarted = threadHasStarted(serverThreadDetail);
   const environmentHasAnyThreads = environmentHasServerThreads || environmentHasDraftThreads;
+  const hiddenByPiMode =
+    piModeEnabled &&
+    serverThreadShell !== null &&
+    !isThreadVisible(
+      "pi",
+      serverThreadShell,
+      serverConfigs.get(serverThreadShell.environmentId)?.providers ?? [],
+    );
+
+  useEffect(() => {
+    if (!hiddenByPiMode) return;
+    toastManager.add({
+      type: "info",
+      title: "Thread hidden by Pi mode",
+      description: "Turn off Pi mode in Provider settings to open this thread.",
+    });
+    void navigate({ to: "/", replace: true });
+  }, [hiddenByPiMode, navigate]);
 
   useEffect(() => {
     if (!threadRef || !bootstrapComplete) {
@@ -74,7 +98,7 @@ function ChatThreadRouteView() {
     finalizePromotedDraftThreadByRef(threadRef);
   }, [draftThread, serverThreadStarted, threadRef]);
 
-  if (!threadRef) {
+  if (!threadRef || hiddenByPiMode) {
     return null;
   }
 

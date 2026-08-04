@@ -18,6 +18,7 @@ import {
 } from "./providerIconUtils";
 import type { ProviderInstanceEntry } from "../../providerInstances";
 import { ComposerControl, ComposerControlChevron } from "./ComposerControl";
+import { useClientSettings } from "../../hooks/useSettings";
 
 export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   /**
@@ -44,6 +45,14 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   getModelDisabledReason?: (instanceId: ProviderInstanceId, model: string) => string | null;
   onInstanceModelChange: (instanceId: ProviderInstanceId, model: string) => void;
 }) {
+  const piModeEnabled = useClientSettings((settings) => settings.piModeEnabled);
+  const visibleInstanceEntries = useMemo(
+    () =>
+      piModeEnabled
+        ? props.instanceEntries.filter((entry) => entry.driverKind === "piAgent")
+        : props.instanceEntries,
+    [piModeEnabled, props.instanceEntries],
+  );
   const [uncontrolledIsMenuOpen, setUncontrolledIsMenuOpen] = useState(false);
   const isMenuOpen = props.open ?? uncontrolledIsMenuOpen;
 
@@ -52,9 +61,9 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   // instance disappears, do not infer a replacement from its driver kind.
   const activeEntry = useMemo(() => {
     return (
-      props.instanceEntries.find((entry) => entry.instanceId === props.activeInstanceId) ?? null
+      visibleInstanceEntries.find((entry) => entry.instanceId === props.activeInstanceId) ?? null
     );
-  }, [props.activeInstanceId, props.instanceEntries]);
+  }, [props.activeInstanceId, visibleInstanceEntries]);
 
   const activeInstanceId = props.activeInstanceId;
   const selectedInstanceOptions = props.modelOptionsByInstance.get(activeInstanceId) ?? [];
@@ -67,7 +76,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     selectedInstanceOptions[0];
   const triggerTitle = selectedModel ? getTriggerDisplayModelName(selectedModel) : props.model;
   const triggerLabel = selectedModel ? getTriggerDisplayModelLabel(selectedModel) : props.model;
-  const duplicateDriverCount = props.instanceEntries.filter(
+  const duplicateDriverCount = visibleInstanceEntries.filter(
     (entry) => activeEntry !== null && entry.driverKind === activeEntry.driverKind,
   ).length;
   const showInstanceBadge = Boolean(activeEntry?.accentColor) || duplicateDriverCount > 1;
@@ -196,7 +205,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
           model={props.model}
           lockedProvider={props.lockedProvider}
           lockedContinuationGroupKey={props.lockedContinuationGroupKey ?? null}
-          instanceEntries={props.instanceEntries}
+          instanceEntries={visibleInstanceEntries}
           {...(props.keybindings ? { keybindings: props.keybindings } : {})}
           modelOptionsByInstance={props.modelOptionsByInstance}
           terminalOpen={props.terminalOpen ?? false}

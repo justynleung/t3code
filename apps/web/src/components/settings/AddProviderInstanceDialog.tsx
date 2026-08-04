@@ -13,7 +13,7 @@ import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSet
 import { cn } from "../../lib/utils";
 import { normalizeProviderAccentColor } from "../../providerInstances";
 import { Button } from "../ui/button";
-import { ACPRegistryIcon, Gemini, GithubCopilotIcon, PiAgentIcon, type Icon } from "../Icons";
+import { ACPRegistryIcon, Gemini, GithubCopilotIcon, type Icon } from "../Icons";
 import {
   Dialog,
   DialogDescription,
@@ -92,11 +92,6 @@ const COMING_SOON_DRIVER_OPTIONS: readonly ComingSoonDriverOption[] = [
     label: "ACP Registry",
     icon: ACPRegistryIcon,
   },
-  {
-    value: ProviderDriverKind.make("piAgent"),
-    label: "Pi Agent",
-    icon: PiAgentIcon,
-  },
 ];
 
 /**
@@ -117,14 +112,23 @@ function validateInstanceId(id: string, existing: ReadonlySet<string>): string |
 interface AddProviderInstanceDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  allowedDriverKind?: ProviderDriverKind | undefined;
 }
 
-export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderInstanceDialogProps) {
+export function AddProviderInstanceDialog({
+  open,
+  onOpenChange,
+  allowedDriverKind,
+}: AddProviderInstanceDialogProps) {
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
 
   const [wizardStep, setWizardStep] = useState(0);
-  const [driver, setDriver] = useState<ProviderDriverKind>(DEFAULT_DRIVER_KIND);
+  const availableDriverOptions = allowedDriverKind
+    ? DRIVER_OPTIONS.filter((option) => option.value === allowedDriverKind)
+    : DRIVER_OPTIONS;
+  const initialDriver = availableDriverOptions[0]?.value ?? DEFAULT_DRIVER_KIND;
+  const [driver, setDriver] = useState<ProviderDriverKind>(initialDriver);
   const [label, setLabel] = useState("");
   const [accentColor, setAccentColor] = useState<string>("");
   const [instanceIdOverride, setInstanceIdOverride] = useState<string | null>(null);
@@ -253,7 +257,7 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
                   aria-labelledby="add-instance-driver-label"
                   className="grid grid-cols-1 gap-2 sm:grid-cols-2"
                 >
-                  {DRIVER_OPTIONS.map((option) => {
+                  {availableDriverOptions.map((option) => {
                     const IconComponent = option.icon;
                     return (
                       <RadioPrimitive.Root
@@ -279,7 +283,7 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
                       </RadioPrimitive.Root>
                     );
                   })}
-                  {COMING_SOON_DRIVER_OPTIONS.map((option) => {
+                  {(allowedDriverKind ? [] : COMING_SOON_DRIVER_OPTIONS).map((option) => {
                     const IconComponent = option.icon;
                     return (
                       <RadioPrimitive.Root
