@@ -20,6 +20,7 @@ import {
 import { EditorId } from "./editor.ts";
 import { ModelCapabilities } from "./model.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
+import { RuntimeMode } from "./orchestration.ts";
 import { ServerSettings } from "./settings.ts";
 
 const KeybindingsMalformedConfigIssue = Schema.Struct({
@@ -69,6 +70,7 @@ export const ServerProviderModel = Schema.Struct({
   isCustom: Schema.Boolean,
   isDefault: Schema.optional(Schema.Boolean),
   isLegacy: Schema.optional(Schema.Boolean),
+  supportsImages: Schema.optional(Schema.Boolean),
   capabilities: Schema.NullOr(ModelCapabilities),
 });
 export type ServerProviderModel = typeof ServerProviderModel.Type;
@@ -170,6 +172,7 @@ export const ServerProvider = Schema.Struct({
   badgeLabel: Schema.optional(TrimmedNonEmptyString),
   continuation: Schema.optional(ServerProviderContinuation),
   showInteractionModeToggle: Schema.optional(Schema.Boolean),
+  supportedRuntimeModes: Schema.optional(Schema.Array(RuntimeMode)),
   requiresNewThreadForModelChange: Schema.optional(Schema.Boolean),
   enabled: Schema.Boolean,
   installed: Schema.Boolean,

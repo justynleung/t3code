@@ -76,6 +76,17 @@ export const ClientSettingsSchema = Schema.Struct({
   glassOpacity: GlassOpacity.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_GLASS_OPACITY)),
   ),
+  piModeEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  piModeLastModelSelection: Schema.NullOr(ModelSelection).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  piModeWriterRestore: Schema.NullOr(
+    Schema.Struct({
+      previousTextGenerationModelSelection: ModelSelection,
+      previousSourceControlWriterModelSelection: Schema.NullOr(ModelSelection),
+      appliedPiSelection: ModelSelection,
+    }),
+  ).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   // Model favorites. Historically keyed by provider kind, now
   // widened to `ProviderInstanceId` so users can favorite a specific model
   // on a custom provider instance (e.g. "Codex Personal · gpt-5") without
@@ -401,6 +412,24 @@ export const OpenCodeSettings = makeProviderSettingsSchema(
 );
 export type OpenCodeSettings = typeof OpenCodeSettings.Type;
 
+export const PiSettings = makeProviderSettingsSchema(
+  {
+    enabled: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(true)),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    binaryPath: makeBinaryPathSetting("pi").pipe(
+      Schema.annotateKey({
+        title: "Binary path",
+        description: "Path to the Pi Agent binary used by this instance.",
+        providerSettingsForm: { placeholder: "pi", clearWhenEmpty: "omit" },
+      }),
+    ),
+  },
+  { order: ["binaryPath"] },
+);
+export type PiSettings = typeof PiSettings.Type;
+
 export const ObservabilitySettings = Schema.Struct({
   otlpTracesUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   otlpMetricsUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
@@ -520,6 +549,7 @@ export const ServerSettings = Schema.Struct({
     cursor: CursorSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     grok: GrokSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     opencode: OpenCodeSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    piAgent: PiSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   }).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   // New driver-agnostic instance map. Keyed by `ProviderInstanceId`; values
   // are `ProviderInstanceConfig` envelopes. The driver-specific config blob
@@ -623,6 +653,11 @@ const OpenCodeSettingsPatch = Schema.Struct({
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
+const PiSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  binaryPath: Schema.optionalKey(TrimmedString),
+});
+
 export const ServerSettingsPatch = Schema.Struct({
   // Server settings
   enableAssistantStreaming: Schema.optionalKey(Schema.Boolean),
@@ -663,6 +698,7 @@ export const ServerSettingsPatch = Schema.Struct({
       cursor: Schema.optionalKey(CursorSettingsPatch),
       grok: Schema.optionalKey(GrokSettingsPatch),
       opencode: Schema.optionalKey(OpenCodeSettingsPatch),
+      piAgent: Schema.optionalKey(PiSettingsPatch),
     }),
   ),
   // Whole-map replacement for the new instance config. Patching individual
@@ -680,6 +716,17 @@ export const ClientSettingsPatch = Schema.Struct({
   diffIgnoreWhitespace: Schema.optionalKey(Schema.Boolean),
   environmentIdentificationMode: Schema.optionalKey(EnvironmentIdentificationMode),
   glassOpacity: Schema.optionalKey(GlassOpacity),
+  piModeEnabled: Schema.optionalKey(Schema.Boolean),
+  piModeLastModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  piModeWriterRestore: Schema.optionalKey(
+    Schema.NullOr(
+      Schema.Struct({
+        previousTextGenerationModelSelection: ModelSelection,
+        previousSourceControlWriterModelSelection: Schema.NullOr(ModelSelection),
+        appliedPiSelection: ModelSelection,
+      }),
+    ),
+  ),
   favorites: Schema.optionalKey(
     Schema.Array(
       Schema.Struct({
