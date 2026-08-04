@@ -33,6 +33,35 @@ describe("ClientSettings word wrap", () => {
   });
 });
 
+describe("ClientSettings Pi mode", () => {
+  it("defaults to disabled without a remembered selection or restore record", () => {
+    const settings = decodeClientSettings({});
+
+    expect(settings.piModeEnabled).toBe(false);
+    expect(settings.piModeLastModelSelection).toBeNull();
+    expect(settings.piModeWriterRestore).toBeNull();
+  });
+
+  it("round-trips the local writer restoration record", () => {
+    const piSelection = { instanceId: ProviderInstanceId.make("piAgent"), model: "openai/gpt-5" };
+    const settings = decodeClientSettings({
+      piModeEnabled: true,
+      piModeLastModelSelection: piSelection,
+      piModeWriterRestore: {
+        previousTextGenerationModelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5.6-luna",
+        },
+        previousSourceControlWriterModelSelection: null,
+        appliedPiSelection: piSelection,
+      },
+    });
+
+    expect(settings.piModeLastModelSelection).toEqual(piSelection);
+    expect(settings.piModeWriterRestore?.appliedPiSelection).toEqual(piSelection);
+  });
+});
+
 describe("ClientSettings glass opacity", () => {
   it("defaults to a readable translucent surface", () => {
     expect(decodeClientSettings({}).glassOpacity).toBe(80);
@@ -122,6 +151,7 @@ describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
     // Legacy `providers` struct is still hydrated with its per-driver defaults
     // so existing call sites keep working through the migration.
     expect(decoded.providers.codex.enabled).toBe(true);
+    expect(decoded.providers.piAgent).toEqual({ enabled: true, binaryPath: "pi" });
   });
 
   it("decodes a multi-instance map mixing first-party and fork drivers", () => {

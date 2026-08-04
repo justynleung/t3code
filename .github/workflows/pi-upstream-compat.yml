@@ -1,0 +1,252 @@
+name: Pi upstream compatibility
+
+on:
+  schedule:
+    - cron: "17 8 * * *"
+  workflow_dispatch:
+    inputs:
+      upstream_tag:
+        description: "Stable upstream tag; leave empty for the newest unseen tag"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: pi-upstream-compatibility
+  cancel-in-progress: false
+
+jobs:
+  certify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ github.token }}
+      UPSTREAM_REPOSITORY: pingdotgg/t3code
+      PI_MIN_VERSION: 0.80.4
+    steps:
+      - name: Check out Pi integration
+        uses: actions/checkout@v6
+        with:
+          ref: pi/main
+          fetch-depth: 0
+
+      - id: target
+        name: Resolve unseen stable tag
+        shell: bash
+        env:
+          REQUESTED_TAG: ${{ inputs.upstream_tag }}
+        run: |
+          set -euo pipefail
+          if git remote get-url upstream >/dev/null 2>&1; then
+            git remote set-url upstream "https://github.com/${UPSTREAM_REPOSITORY}.git"
+          else
+            git remote add upstream "https://github.com/${UPSTREAM_REPOSITORY}.git"
+          fi
+          git fetch --force --tags upstream
+
+          if [[ -n "${REQUESTED_TAG:-}" ]]; then
+            target="${REQUESTED_TAG}"
+          else
+            target=""
+            while IFS= read -r candidate; do
+              if ! gh release list --limit 1000 --json tagName --jq '.[].tagName' \
+                | grep -Fqx "t3-pi-${candidate}"; then
+                target="$candidate"
+                break
+              fi
+            done < <(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-version:refname \
+              | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$')
+          fi
+
+          if [[ -z "$target" ]]; then
+            echo "No unseen stable upstream tag."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ ! "$target" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Only stable upstream tags are supported: $target" >&2
+            exit 1
+          fi
+          git rev-parse --verify "refs/tags/$target^{commit}"
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          echo "tag=$target" >> "$GITHUB_OUTPUT"
+          echo "integration_sha=$(git rev-parse origin/pi/main)" >> "$GITHUB_OUTPUT"
+          echo "integration_short=$(git rev-parse --short=12 origin/pi/main)" >> "$GITHUB_OUTPUT"
+
+          last_release=$(gh release list --limit 1000 --json tagName --jq \
+            '[.[].tagName | select(startswith("t3-pi-v"))] | first // "none"')
+          echo "last_release=$last_release" >> "$GITHUB_OUTPUT"
+
+      - name: Apply ordered Pi patch series
+        if: steps.target.outputs.skip != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          integration_ref=origin/pi/main
+          base=$(git merge-base "$integration_ref" upstream/main)
+          mapfile -t commits < <(git rev-list --reverse "$base..$integration_ref")
+          declare -a ordered
+
+          for ordinal in 1 2 3 4 5; do
+            match=""
+            for commit in "${commits[@]}"; do
+              if git show -s --format=%B "$commit" | grep -Fqx "Pi-Patch: $ordinal"; then
+                if [[ -n "$match" ]]; then
+                  echo "Multiple commits declare Pi-Patch: $ordinal" >&2
+                  exit 1
+                fi
+                match="$commit"
+              fi
+            done
+            if [[ -z "$match" ]]; then
+              echo "Missing commit trailer Pi-Patch: $ordinal" >&2
+              exit 1
+            fi
+            ordered+=("$match")
+          done
+
+          git checkout --detach "${{ steps.target.outputs.tag }}"
+          for commit in "${ordered[@]}"; do
+            git cherry-pick "$commit"
+          done
+
+      - name: Record relevant upstream changes
+        if: always() && steps.target.outputs.skip != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          target="${{ steps.target.outputs.tag }}"
+          previous=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-version:refname \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+            | awk -v target="$target" '$0 == target { seen=1; next } seen { print; exit }')
+          if [[ -n "$previous" ]]; then
+            git diff --name-only "$previous..$target" > pi-upstream-changed-files.txt
+          else
+            git show --pretty='' --name-only "$target" > pi-upstream-changed-files.txt
+          fi
+
+      - name: Set up upstream toolchain
+        if: steps.target.outputs.skip != 'true'
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+
+      - name: Run focused compatibility tests
+        if: steps.target.outputs.skip != 'true'
+        run: |
+          vp test run \
+            packages/contracts/src/settings.test.ts \
+            apps/server/src/provider/pi/PiRpcTransport.test.ts \
+            apps/server/src/provider/pi/PiProvider.test.ts \
+            apps/server/src/provider/pi/PiAdapter.test.ts \
+            apps/web/src/piModePolicy.test.ts \
+            apps/server/src/provider/builtInDrivers.test.ts
+
+      - name: Typecheck contracts, server, and web
+        if: steps.target.outputs.skip != 'true'
+        run: |
+          vp run --filter @t3tools/contracts typecheck
+          vp run --filter t3 typecheck
+          vp run --filter @t3tools/web typecheck
+
+      - name: Build server and web
+        if: steps.target.outputs.skip != 'true'
+        run: |
+          vp run --filter @t3tools/web build
+          vp run --filter t3 build:bundle
+
+      - id: package
+        name: Package private t3-pi CLI
+        if: steps.target.outputs.skip != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          target="${{ steps.target.outputs.tag }}"
+          revision=$(git rev-parse --short=12 HEAD)
+          version="${target#v}-pi.${GITHUB_RUN_NUMBER}"
+          staging="$RUNNER_TEMP/t3-pi-package"
+          mkdir -p "$staging/dist" release
+          cp -R apps/server/dist/. "$staging/dist/"
+          node - apps/server/package.json "$staging/package.json" "$version" <<'NODE'
+          const fs = require("node:fs");
+          const [sourcePath, outputPath, version] = process.argv.slice(2);
+          const source = JSON.parse(fs.readFileSync(sourcePath, "utf8"));
+          const manifest = {
+            ...source,
+            name: "t3-pi-private",
+            version,
+            private: true,
+            bin: { "t3-pi": "./dist/bin.mjs" },
+          };
+          delete manifest.scripts;
+          delete manifest.devDependencies;
+          fs.writeFileSync(outputPath, JSON.stringify(manifest, null, 2) + "\n");
+          NODE
+          npm pack "$staging" --pack-destination release
+
+          node - compatibility/pi.json release/compatibility.json \
+            "$target" "${{ steps.target.outputs.integration_sha }}" "$revision" <<'NODE'
+          const fs = require("node:fs");
+          const [source, destination, upstreamTag, integrationRevision, buildRevision] = process.argv.slice(2);
+          const manifest = JSON.parse(fs.readFileSync(source, "utf8"));
+          manifest.lastCertified = {
+            upstreamTag,
+            integrationRevision,
+            buildRevision,
+            minimumPiVersion: manifest.minimumPiVersion,
+            certifiedAt: new Date().toISOString(),
+          };
+          fs.writeFileSync(destination, JSON.stringify(manifest, null, 2) + "\n");
+          NODE
+          cp pi-upstream-changed-files.txt release/
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+
+      - name: Publish certified private release
+        if: steps.target.outputs.skip != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          target="${{ steps.target.outputs.tag }}"
+          release_tag="t3-pi-${target}"
+          notes=$(cat <<EOF
+          Certified private Pi build for upstream T3 ${target}.
+
+          - Pi integration: ${{ steps.target.outputs.integration_sha }}
+          - Integrated build: ${{ steps.package.outputs.revision }}
+          - Tested Pi range: >= ${PI_MIN_VERSION}
+          - CLI command: t3-pi
+          EOF
+          )
+          gh release create "$release_tag" release/* \
+            --title "T3 Pi ${target} · ${{ steps.target.outputs.integration_short }} · Pi >= ${PI_MIN_VERSION}" \
+            --notes "$notes"
+
+      - name: Upload compatibility diagnostics
+        if: always() && steps.target.outputs.skip != 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: pi-compat-${{ steps.target.outputs.tag }}
+          path: |
+            pi-upstream-changed-files.txt
+            release/compatibility.json
+          if-no-files-found: warn
+
+      - name: Open a compatibility failure issue
+        if: failure() && steps.target.outputs.skip != 'true'
+        shell: bash
+        run: |
+          target="${{ steps.target.outputs.tag }}"
+          body=$(cat <<EOF
+          Pi compatibility failed for upstream ${target}.
+
+          - Failed patch or test: inspect the failed step in [workflow run](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})
+          - Last certified Pi build: ${{ steps.target.outputs.last_release }}
+          - Relevant upstream files: attached to the workflow artifact \`pi-compat-${target}\`
+          EOF
+          )
+          gh issue create --title "Pi compatibility failed for ${target}" --body "$body"

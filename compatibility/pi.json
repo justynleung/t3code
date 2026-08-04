@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "upstreamRepository": "pingdotgg/t3code",
+  "integrationBranch": "pi/main",
+  "minimumPiVersion": "0.80.4",
+  "lastCertified": null
+}
