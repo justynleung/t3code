@@ -48,7 +48,8 @@ export type RightPanelSurface =
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 // v9 removed the "plan" surface kind (plans render inline in the transcript).
-const RIGHT_PANEL_STORAGE_VERSION = 9;
+// v10 added the global right-panel maximized preference.
+const RIGHT_PANEL_STORAGE_VERSION = 10;
 
 export interface ThreadRightPanelState {
   isOpen: boolean;
@@ -58,6 +59,8 @@ export interface ThreadRightPanelState {
 
 interface RightPanelStoreState {
   byThreadKey: Record<string, ThreadRightPanelState>;
+  maximizedPreference: boolean;
+  setMaximizedPreference: (maximized: boolean) => void;
   open: (ref: ScopedThreadRef, kind: Exclude<RightPanelKind, "file" | "terminal">) => void;
   openBrowser: (ref: ScopedThreadRef, tabId: string | null) => void;
   openFile: (ref: ScopedThreadRef, relativePath: string, line?: number) => void;
@@ -163,10 +166,16 @@ function normalizeRevealLine(line: number | undefined): number | null {
 
 export function migratePersistedRightPanelState(persistedState: unknown): {
   byThreadKey: Record<string, ThreadRightPanelState>;
+  maximizedPreference: boolean;
 } {
   if (!persistedState || typeof persistedState !== "object") {
-    return { byThreadKey: {} };
+    return { byThreadKey: {}, maximizedPreference: false };
   }
+  const maximizedPreference =
+    "maximizedPreference" in persistedState &&
+    typeof persistedState.maximizedPreference === "boolean"
+      ? persistedState.maximizedPreference
+      : false;
   const byThreadKey =
     "byThreadKey" in persistedState &&
     persistedState.byThreadKey &&
@@ -251,13 +260,15 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
           ),
         )
       : {};
-  return { byThreadKey };
+  return { byThreadKey, maximizedPreference };
 }
 
 export const useRightPanelStore = create<RightPanelStoreState>()(
   persist(
     (set) => ({
       byThreadKey: {},
+      maximizedPreference: false,
+      setMaximizedPreference: (maximizedPreference) => set({ maximizedPreference }),
       open: (ref, kind) =>
         set((state) => ({
           byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) => {
@@ -546,7 +557,10 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
       storage: createJSONStorage(() =>
         resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined),
       ),
-      partialize: (state) => ({ byThreadKey: state.byThreadKey }),
+      partialize: (state) => ({
+        byThreadKey: state.byThreadKey,
+        maximizedPreference: state.maximizedPreference,
+      }),
       migrate: migratePersistedRightPanelState,
     },
   ),
