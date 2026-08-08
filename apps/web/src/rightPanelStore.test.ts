@@ -14,7 +14,7 @@ const refA = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-A"))
 const refB = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-B"));
 
 beforeEach(() => {
-  useRightPanelStore.setState({ byThreadKey: {} });
+  useRightPanelStore.setState({ byThreadKey: {}, maximizedPreference: false });
 });
 
 describe("rightPanelStore", () => {
@@ -32,6 +32,7 @@ describe("rightPanelStore", () => {
         },
       }),
     ).toEqual({
+      maximizedPreference: false,
       byThreadKey: {
         "env-1:thread-A": {
           isOpen: false,
@@ -54,6 +55,7 @@ describe("rightPanelStore", () => {
         },
       }),
     ).toEqual({
+      maximizedPreference: false,
       byThreadKey: {
         "env-1:thread-A": {
           isOpen: true,
@@ -84,6 +86,7 @@ describe("rightPanelStore", () => {
         },
       }),
     ).toEqual({
+      maximizedPreference: false,
       byThreadKey: {
         "env-1:thread-A": {
           isOpen: true,
@@ -99,6 +102,62 @@ describe("rightPanelStore", () => {
           ],
         },
       },
+    });
+  });
+
+  it("migrates the maximized preference without disturbing saved surfaces", () => {
+    expect(
+      migratePersistedRightPanelState({
+        maximizedPreference: true,
+        byThreadKey: {
+          "env-1:thread-A": {
+            isOpen: false,
+            activeSurfaceId: "plan",
+            surfaces: [{ id: "plan", kind: "plan" }],
+          },
+        },
+      }),
+    ).toEqual({
+      maximizedPreference: true,
+      byThreadKey: {
+        "env-1:thread-A": {
+          isOpen: false,
+          activeSurfaceId: "plan",
+          surfaces: [{ id: "plan", kind: "plan" }],
+        },
+      },
+    });
+  });
+
+  it("defaults an invalid maximized preference to false", () => {
+    expect(
+      migratePersistedRightPanelState({ maximizedPreference: "true", byThreadKey: {} }),
+    ).toEqual({
+      maximizedPreference: false,
+      byThreadKey: {},
+    });
+  });
+
+  it("keeps the maximized preference when the panel closes and reopens", () => {
+    const store = useRightPanelStore.getState();
+    store.setMaximizedPreference(true);
+    store.open(refA, "plan");
+    store.close(refA);
+    store.show(refA);
+
+    expect(useRightPanelStore.getState().maximizedPreference).toBe(true);
+
+    useRightPanelStore.getState().setMaximizedPreference(false);
+    expect(useRightPanelStore.getState().maximizedPreference).toBe(false);
+  });
+
+  it("writes the maximized preference to persisted state", async () => {
+    useRightPanelStore.getState().setMaximizedPreference(true);
+    const { name, storage } = useRightPanelStore.persist.getOptions();
+    if (!name || !storage) throw new Error("Expected configured right panel persistence");
+
+    expect(await storage.getItem(name)).toMatchObject({
+      state: { maximizedPreference: true },
     });
   });
 

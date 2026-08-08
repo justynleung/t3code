@@ -1328,9 +1328,6 @@ function ChatViewContent(props: ChatViewProps) {
   >({});
   const [isConnecting, _setIsConnecting] = useState(false);
   const [isRevertingCheckpoint, setIsRevertingCheckpoint] = useState(false);
-  const [maximizedRightPanelThreadKey, setMaximizedRightPanelThreadKey] = useState<string | null>(
-    null,
-  );
   const [respondingRequestIds, setRespondingRequestIds] = useState<ApprovalRequestId[]>([]);
   const [respondingUserInputRequestIds, setRespondingUserInputRequestIds] = useState<
     ApprovalRequestId[]
@@ -1552,6 +1549,7 @@ function ChatViewContent(props: ChatViewProps) {
   const rightPanelState = useRightPanelStore((state) =>
     selectThreadRightPanelState(state.byThreadKey, activeThreadRef),
   );
+  const rightPanelMaximizedPreference = useRightPanelStore((state) => state.maximizedPreference);
   const activeRightPanelSurface = useRightPanelStore((state) =>
     selectActiveRightPanelSurface(state.byThreadKey, activeThreadRef),
   );
@@ -1577,8 +1575,7 @@ function ChatViewContent(props: ChatViewProps) {
   const previewPanelOpen = activeRightPanelKind === "preview" && isPreviewSupportedInRuntime();
   const rightPanelOpen = rightPanelState.isOpen;
   const canMaximizeRightPanel = rightPanelOpen && !shouldUsePlanSidebarSheet;
-  const rightPanelMaximized =
-    canMaximizeRightPanel && maximizedRightPanelThreadKey === routeThreadKey;
+  const rightPanelMaximized = canMaximizeRightPanel && rightPanelMaximizedPreference;
   const inlineRightPanelOwnsTitleBar = rightPanelOpen && !shouldUsePlanSidebarSheet;
 
   useEffect(() => {
@@ -3159,7 +3156,6 @@ function ChatViewContent(props: ChatViewProps) {
   }, [activeThreadKey, activeThreadRef, dismissPlanSidebarForCurrentTurn, planSidebarOpen]);
   const closePlanSidebar = useCallback(() => {
     if (!activeThreadRef) return;
-    setMaximizedRightPanelThreadKey(null);
     useRightPanelStore.getState().close(activeThreadRef);
     dismissPlanSidebarForCurrentTurn();
   }, [activeThreadRef, dismissPlanSidebarForCurrentTurn]);
@@ -3212,7 +3208,6 @@ function ChatViewContent(props: ChatViewProps) {
   }, [activePreviewState.activeTabId, activeThreadRef, createBrowserSurface, previewPanelOpen]);
   const closePreviewPanel = useCallback(() => {
     if (activeThreadRef) {
-      setMaximizedRightPanelThreadKey(null);
       useRightPanelStore.getState().close(activeThreadRef);
     }
   }, [activeThreadRef]);
@@ -3349,10 +3344,8 @@ function ChatViewContent(props: ChatViewProps) {
   }, [activeThreadRef, closePlanSidebar, closePreviewPanel, planSidebarOpen, rightPanelOpen]);
   const toggleRightPanelMaximized = useCallback(() => {
     if (!canMaximizeRightPanel) return;
-    setMaximizedRightPanelThreadKey((threadKey) =>
-      threadKey === routeThreadKey ? null : routeThreadKey,
-    );
-  }, [canMaximizeRightPanel, routeThreadKey]);
+    useRightPanelStore.getState().setMaximizedPreference(!rightPanelMaximizedPreference);
+  }, [canMaximizeRightPanel, rightPanelMaximizedPreference]);
   const cleanupRightPanelSurfaces = useCallback(
     (surfaces: readonly RightPanelSurface[]) => {
       if (!activeThreadRef) return;
